@@ -22,6 +22,9 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState({ key: 'status', direction: 'asc' });
   const [page, setPage] = useState(1);
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [versionFilter, setVersionFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   async function loadData() {
     setLoading(true);
@@ -43,7 +46,14 @@ function App() {
   }, []);
 
   const rows = payload ? createRows(payload) : [];
-  const sortedRows = [...rows].sort((first, second) => {
+  const categoryOptions = [...new Set(rows.map((row) => row.category))].sort((a, b) => a.localeCompare(b));
+  const versionOptions = [...new Set(rows.map((row) => row.version))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  const scopedRows = rows.filter((row) => (
+    (categoryFilter === 'all' || row.category === categoryFilter)
+    && (versionFilter === 'all' || row.version === versionFilter)
+  ));
+  const filteredRows = scopedRows.filter((row) => statusFilter === 'all' || row.status === statusFilter);
+  const sortedRows = [...filteredRows].sort((first, second) => {
     const firstValue = sort.key === 'status' ? statusPriority[first.status] : first[sort.key] ?? '';
     const secondValue = sort.key === 'status' ? statusPriority[second.status] : second[sort.key] ?? '';
     const comparison = String(firstValue).localeCompare(String(secondValue), undefined, { numeric: true });
@@ -60,7 +70,22 @@ function App() {
     setPage(1);
   }
 
-  const summary = rows.reduce((counts, row) => ({ ...counts, [row.status]: (counts[row.status] || 0) + 1 }), {});
+  const summary = scopedRows.reduce((counts, row) => ({ ...counts, [row.status]: (counts[row.status] || 0) + 1 }), {});
+
+  function changeCategoryFilter(value) {
+    setCategoryFilter(value);
+    setPage(1);
+  }
+
+  function changeVersionFilter(value) {
+    setVersionFilter(value);
+    setPage(1);
+  }
+
+  function toggleStatusFilter(status) {
+    setStatusFilter((current) => (current === status ? 'all' : status));
+    setPage(1);
+  }
 
   return (
     <main>
@@ -77,10 +102,17 @@ function App() {
 
       {payload && <section className="summary" aria-label="Pipeline status summary">
         {['Healthy', 'Failed', 'Stale', 'Missing', 'In Progress', 'Unknown'].map((status) => (
-          <div className="summary-item" key={status}>
+          <button
+            type="button"
+            className={`summary-item${statusFilter === status ? ' summary-item-active' : ''}`}
+            key={status}
+            onClick={() => toggleStatusFilter(status)}
+            aria-pressed={statusFilter === status}
+            title={`Show ${status} pipelines`}
+          >
             <StatusBadge status={status} />
             <strong>{summary[status] || 0}</strong>
-          </div>
+          </button>
         ))}
       </section>}
 
@@ -92,6 +124,29 @@ function App() {
           </div>
           {payload && <span className="threshold">Stale after {payload.staleAfterHours} hours</span>}
         </div>
+
+        {payload && <div className="filters">
+          <label className="filter">
+            <span>Category</span>
+            <select value={categoryFilter} onChange={(event) => changeCategoryFilter(event.target.value)}>
+              <option value="all">All categories</option>
+              {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
+            </select>
+          </label>
+          <label className="filter">
+            <span>Release version</span>
+            <select value={versionFilter} onChange={(event) => changeVersionFilter(event.target.value)}>
+              <option value="all">All versions</option>
+              {versionOptions.map((version) => <option key={version} value={version}>{version}</option>)}
+            </select>
+          </label>
+          {(categoryFilter !== 'all' || versionFilter !== 'all' || statusFilter !== 'all') && (
+            <div className="filter-status">
+              {statusFilter !== 'all' && <span className="filter-chip">Status: <strong>{statusFilter}</strong></span>}
+              <button type="button" className="clear-filters" onClick={() => { changeCategoryFilter('all'); changeVersionFilter('all'); toggleStatusFilter('all'); }}>Clear filters</button>
+            </div>
+          )}
+        </div>}
 
         {error && <div className="error">{error}</div>}
         {loading && !payload && <div className="loading">Loading pipeline status...</div>}
@@ -133,7 +188,7 @@ function App() {
         </div>}
 
         {payload && <footer className="pagination">
-          <span>{rows.length} expected pipelines</span>
+          <span>{filteredRows.length} expected pipelines</span>
           <div>
             <button type="button" onClick={() => setPage(page - 1)} disabled={page === 1}>Previous</button>
             <span>Page {page} of {pageCount}</span>

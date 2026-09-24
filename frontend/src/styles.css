@@ -28,15 +28,29 @@ h1 { margin-bottom: 10px; color: #fff; font-size: 24px; line-height: 1.15; font-
 .refresh span { font-size: 21px; vertical-align: -1px; }
 
 .summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 20px; border: 1px solid #d5d8dc; background: #fff; }
-.summary-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 14px 16px; border-right: 1px solid #d5d8dc; }
+.summary-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 64px; padding: 14px 16px; border: 0; border-right: 1px solid #d5d8dc; background: #fff; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .summary-item:last-child { border-right: 0; }
+.summary-item:hover { background: #ebf5fb; }
+.summary-item:focus-visible { outline: 2px solid #217cce; outline-offset: -2px; }
+.summary-item-active { background: #eaf3fb; box-shadow: inset 0 -3px 0 #217cce; }
 .summary-item strong { color: #2e3e4f; font: 600 26px/1 "Open Sans", sans-serif; }
+
+.filter-status { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.filter-chip { padding: 6px 10px; background: #eaf3fb; color: #1a62a4; font: 600 12px/1 "Open Sans", sans-serif; border-radius: 2px; }
+.filter-chip strong { text-transform: capitalize; }
 
 .panel { overflow: hidden; border: 1px solid #d5d8dc; background: #fff; }
 .table-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 20px; border-bottom: 1px solid #d5d8dc; background: #fff; }
 h2 { margin-bottom: 5px; color: #2e3e4f; font-size: 20px; font-weight: 400; }
 .table-heading p { margin: 0; color: #818b95; font-size: 12px; }
 .threshold { padding: 6px 8px; background: #deebf8; color: #217cce; font: 600 12px/1 "Open Sans", sans-serif; }
+.filters { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; padding: 14px 20px; border-bottom: 1px solid #d5d8dc; background: #fafbfc; }
+.filter { display: flex; flex-direction: column; gap: 6px; }
+.filter span { color: #818b95; font: 600 11px/1 "Open Sans", sans-serif; letter-spacing: .4px; text-transform: uppercase; }
+.filter select { min-height: 32px; min-width: 180px; border: 1px solid #abb2b8; border-radius: 2px; padding: 0 8px; background: #fff; color: #2e3e4f; font-size: 13px; }
+.filter select:focus { border-color: #217cce; outline: none; }
+.clear-filters { min-height: 32px; border: 1px solid #abb2b8; border-radius: 2px; padding: 0 12px; background: #fff; color: #217cce; cursor: pointer; font-size: 13px; font-weight: 600; }
+.clear-filters:hover { border-color: #217cce; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; min-width: 1240px; border-collapse: collapse; font-size: 13px; }
 th { border-bottom: 1px solid #d5d8dc; background: #fff; text-align: left; white-space: nowrap; }
