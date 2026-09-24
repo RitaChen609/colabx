@@ -3,5 +3,9 @@
   "username": "run-status-user",
   "password": "",
   "database": "stats",
-  "jenkinsBaseUrl": "https://your-jenkins-host"
+  "jenkinsBaseUrl": "https://your-jenkins-host",
+  "llm-provider": "openai",
+  "llm-host": "https://api.openai.com/v1",
+  "llm-model": "gpt-4o-mini",
+  "llm-api-key": ""
 }

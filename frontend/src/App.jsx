@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, CalendarDays, CheckCircle2, CircleAlert, Clock, Cpu, Database, ExternalLink, Heart, Layers, PieChart, Server, Tag, TriangleAlert, X } from 'lucide-react';
+import { BarChart3, CalendarDays, CheckCircle2, ChevronDown, ChevronUp, CircleAlert, Clock, Cpu, Database, ExternalLink, Heart, Layers, PieChart, Server, Sparkles, Tag, TriangleAlert, X } from 'lucide-react';
 import { createRows, statusPriority } from './status.js';
 
 const pageSize = 10;
@@ -65,6 +65,9 @@ function App() {
   const [selectedRowId, setSelectedRowId] = useState(null);
   const [history, setHistory] = useState({ status: 'idle', runs: [] });
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [aiSummary, setAiSummary] = useState({ status: 'idle', text: '' });
+  const [investigation, setInvestigation] = useState({ status: 'idle', text: '' });
+  const [aiPanelCollapsed, setAiPanelCollapsed] = useState(false);
 
   async function loadData() {
     setLoading(true);
@@ -117,6 +120,42 @@ function App() {
 
     return () => { active = false; };
   }, [selectedRowId, payload]);
+
+  useEffect(() => {
+    setInvestigation({ status: 'idle', text: '' });
+  }, [selectedRowId]);
+
+  async function generateAiSummary(rowsForSummary) {
+    setAiSummary({ status: 'loading', text: '' });
+    try {
+      const response = await fetch('/api/insights/summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: rowsForSummary })
+      });
+      if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+      const data = await response.json();
+      setAiSummary({ status: 'ready', text: data.summary || '' });
+    } catch (requestError) {
+      setAiSummary({ status: 'error', text: 'AI insights are unavailable. Confirm Ollama is running.' });
+    }
+  }
+
+  async function investigateRow(row, historyRuns) {
+    setInvestigation({ status: 'loading', text: '' });
+    try {
+      const response = await fetch('/api/insights/investigate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row, historyRuns })
+      });
+      if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+      const data = await response.json();
+      setInvestigation({ status: 'ready', text: data.analysis || '' });
+    } catch (requestError) {
+      setInvestigation({ status: 'error', text: 'AI investigation is unavailable. Confirm Ollama is running.' });
+    }
+  }
 
   const categoryOptions = [...new Set(rows.map((row) => row.category))].sort((a, b) => a.localeCompare(b));
   const versionOptions = [...new Set(rows.map((row) => row.version))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
@@ -274,6 +313,19 @@ function App() {
         </button>
         <button
           type="button"
+          className={`summary-card summary-card-health-status${statusFilter === 'Healthy' ? ' summary-card-active' : ''}`}
+          onClick={() => toggleStatusFilter('Healthy')}
+          aria-pressed={statusFilter === 'Healthy'}
+        >
+          <span className="summary-icon"><Heart size={20} /></span>
+          <span className="summary-body">
+            <span className="summary-label">Health status</span>
+            <strong>{monitoredCount ? Math.round((healthyCount / monitoredCount) * 100) : 0}%</strong>
+            <small>Passed pipelines</small>
+          </span>
+        </button>
+        <button
+          type="button"
           className={`summary-card summary-card-gap${statusFilter === 'attention' ? ' summary-card-active' : ''}`}
           onClick={() => toggleStatusFilter('attention')}
           aria-pressed={statusFilter === 'attention'}
@@ -285,6 +337,34 @@ function App() {
             <small>Monitored pipelines</small>
           </span>
         </button>
+      </section>}
+
+      {payload && <section className="ai-panel" aria-label="AI-generated insights">
+        <div className="ai-panel-heading">
+          <button
+            type="button"
+            className="ai-panel-toggle"
+            onClick={() => setAiPanelCollapsed((collapsed) => !collapsed)}
+            aria-expanded={!aiPanelCollapsed}
+            aria-controls="ai-panel-content"
+          >
+            {aiPanelCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+            <h2><Sparkles size={18} /> AI insights</h2>
+          </button>
+          <button
+            type="button"
+            className="ai-generate-button"
+            onClick={() => generateAiSummary(scopedRows)}
+            disabled={aiSummary.status === 'loading'}
+          >
+            {aiSummary.status === 'loading' ? 'Thinking…' : 'Generate insights'}
+          </button>
+        </div>
+        {!aiPanelCollapsed && <div id="ai-panel-content">
+          {aiSummary.status === 'idle' && <p className="ai-panel-note">Ask AI to summarize what needs attention across the pipelines currently in view.</p>}
+          {aiSummary.status === 'error' && <p className="ai-panel-note ai-panel-error">{aiSummary.text}</p>}
+          {aiSummary.status === 'ready' && <p className="ai-panel-text">{aiSummary.text || 'Everything looks healthy.'}</p>}
+        </div>}
       </section>}
 
       <div className={`dashboard-layout${selectedRow ? ' inspector-open' : ''}`}>
@@ -473,6 +553,19 @@ function App() {
                 </li>;
               })}
             </ul>}
+          </section>
+          <section className="detail-ai">
+            <h3><Sparkles size={16} /> AI investigation</h3>
+            <button
+              type="button"
+              className="ai-investigate-button"
+              onClick={() => investigateRow(selectedRow, history.runs)}
+              disabled={investigation.status === 'loading'}
+            >
+              {investigation.status === 'loading' ? 'Thinking…' : 'Ask AI what to check'}
+            </button>
+            {investigation.status === 'error' && <p className="ai-panel-note ai-panel-error">{investigation.text}</p>}
+            {investigation.status === 'ready' && <p className="ai-panel-text">{investigation.text}</p>}
           </section>
         </div>
       </aside>}

@@ -28,10 +28,13 @@ Set `jenkinsBaseUrl` (or `JENKINS_BASE_URL`) to turn scheduler paths into Jenkin
 links. Scheduler values returned by MarkLogic are Jenkins job paths, so the build
 URL is that base plus the path. Links are hidden when it is not configured.
 
-The API listens at `http://localhost:3001`. Its single endpoint is:
+The API listens at `http://localhost:3001`. Its endpoints are:
 
 ```text
-GET /api/pipeline-status
+GET  /api/pipeline-status
+GET  /api/pipeline-history
+POST /api/insights/summary
+POST /api/insights/investigate
 ```
 
 For each category, data center, architecture, and version, `GET /api/pipeline-status`
@@ -39,3 +42,42 @@ invokes `/ext/find-perf-category-run-info.xqy` through MarkLogic's `/v1/invoke`
 endpoint using HTTP Digest authentication. The cell matrix and expected features
 are in [data/category-config.json](data/category-config.json), aligned with the
 desktop app's `category-config.jsonc`.
+
+## AI insights
+
+`POST /api/insights/summary` and `POST /api/insights/investigate` call the
+configured LLM provider to turn dashboard data into plain-language summaries
+and investigation suggestions. For local [Ollama](https://ollama.com), pull a
+model, for example:
+
+```sh
+ollama pull llama3.1:8b
+```
+
+The checked-in local configuration uses Ollama by default. To use Ollama, set
+`llm-provider` to `ollama`, `llm-host` to `http://localhost:11434`, and
+`llm-model` to the pulled model. To use OpenAI, replace those values with:
+
+```json
+{
+	"llm-provider": "openai",
+	"llm-host": "https://api.openai.com/v1",
+	"llm-model": "gpt-4o-mini",
+	"llm-api-key": "your-api-key"
+}
+```
+
+The API key can also be supplied through `LLM_API_KEY` or `OPENAI_API_KEY`;
+environment variables take precedence over the config file:
+
+```text
+LLM_PROVIDER
+LLM_HOST
+LLM_MODEL
+LLM_API_KEY
+```
+
+`llm-host` should be the provider base URL, such as
+`https://api.openai.com/v1`; the backend appends the provider's chat-completion
+path. Only structured pipeline data already shown on the dashboard is sent to
+the model. The API key remains on the backend and is never sent to the browser.

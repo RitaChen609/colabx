@@ -27,6 +27,10 @@ const jenkinsBaseUrl = process.env.JENKINS_BASE_URL || markLogicConfig.jenkinsBa
 const historyRunLimit = 6;
 const historySearchPageLength = 500;
 const testNamespace = 'http://www.marklogic.com/perf/test';
+const llmProvider = process.env.LLM_PROVIDER || markLogicConfig['llm-provider'] || 'ollama';
+const llmHost = process.env.LLM_HOST || process.env.OLLAMA_URL || markLogicConfig['llm-host'] || 'http://localhost:11434';
+const llmModel = process.env.LLM_MODEL || process.env.OLLAMA_MODEL || markLogicConfig['llm-model'] || 'llama3.1:8b';
+const llmApiKey = process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || markLogicConfig['llm-api-key'] || '';
 
 const categoryBases = {
   DAILY: 'DAILY',
@@ -39,6 +43,7 @@ const categoryBases = {
 };
 
 app.use(cors());
+app.use(express.json());
 
 function getConnection() {
   if (!markLogicUrl || !markLogicUsername || !markLogicPassword) {
@@ -246,6 +251,116 @@ app.get('/api/pipeline-history', async (request, response, next) => {
     const { client, searchUrl } = getConnection();
     const parameters = cellParameters(category, dataCenter, architecture, Number(version), config);
     response.json({ runs: await fetchRunHistory(client, searchUrl, parameters) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** Sends a prompt to the configured LLM provider and returns the generated text. */
+async function askLlm(prompt) {
+  const isOpenAi = llmProvider.toLowerCase() === 'openai';
+  const endpoint = isOpenAi
+    ? `${llmHost.replace(/\/$/, '')}/chat/completions`
+    : `${llmHost.replace(/\/$/, '')}/api/generate`;
+  const headers = { 'Content-Type': 'application/json' };
+  if (isOpenAi && llmApiKey) headers.Authorization = `Bearer ${llmApiKey}`;
+
+  const requestBody = isOpenAi
+    ? {
+        model: llmModel,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2
+      }
+    : { model: llmModel, prompt, stream: false };
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(requestBody)
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`${llmProvider} request failed with ${response.status}: ${body}`);
+
+  const result = JSON.parse(body);
+  return (isOpenAi ? result.choices?.[0]?.message?.content : result.response)?.trim() || '';
+}
+
+function missingPipelines(row) {
+  const found = new Set(row.pipelines);
+  return row.expectedPipelines.filter((pipeline) => !found.has(pipeline));
+}
+
+/** Summarizes only the rows that need attention, so the prompt stays small and focused. */
+function buildSummaryPrompt(rows) {
+  const attentionRows = rows.filter((row) => row.status !== 'Healthy');
+  const lines = attentionRows.slice(0, 60).map((row) => (
+    `- ${row.category} | ML ${row.version} | ${row.dataCenter}/${row.architecture} | status=${row.status} | last run=${row.date || 'never'} | missing=[${missingPipelines(row).join(', ') || 'none'}]`
+  ));
+
+  return [
+    'You are a performance engineering assistant summarizing a pipeline monitoring dashboard.',
+    'Below are the pipeline cells that currently need attention (status is not Healthy).',
+    'Write a concise, well-formatted plain-text summary for an engineer glancing at the dashboard.',
+    'Use exactly this structure, with one item per line and no markdown symbols or introductory text:',
+    'SUMMARY: <one sentence describing the overall state>',
+    'TOP ISSUES:',
+    '- <grouped issue and affected pipelines>',
+    'NEXT CHECKS:',
+    '- <specific investigation step>',
+    '- Group related issues together (e.g. by category or data center) instead of repeating every row.',
+    '- Call out the most urgent items first (Failed, then Stale, then Missing, then In Progress/Unknown).',
+    '- Suggest what to investigate first.',
+    '- Keep it under 150 words. If the list below is empty, say everything looks healthy.',
+    '',
+    lines.length ? lines.join('\n') : '(no rows need attention)'
+  ].join('\n');
+}
+
+/** Focuses the model on one cell plus its recent run history for a targeted investigation. */
+function buildInvestigationPrompt(row, historyRuns) {
+  const historyLines = (historyRuns || []).map((run) => (
+    `- ${run.date || 'unknown date'} | build ${run.mltag || 'n/a'} | found ${run.found}/${run.expected} pipelines`
+  ));
+
+  return [
+    'You are a performance engineering assistant helping investigate one pipeline cell on a monitoring dashboard.',
+    `Cell: ${row.category}, MarkLogic ${row.version}, ${row.dataCenter}/${row.architecture}.`,
+    `Current status: ${row.status}. Last run: ${row.date || 'never'}. Scheduler: ${row.schedulerFull || row.scheduler || 'unknown'}.`,
+    `Missing pipelines: ${missingPipelines(row).join(', ') || 'none'}.`,
+    'Recent run history (most recent first):',
+    historyLines.length ? historyLines.join('\n') : '(no history available)',
+    '',
+    'Give the engineer a well-formatted plain-text response with no markdown symbols or introductory text.',
+    'Use exactly this structure:',
+    'LIKELY CAUSE:',
+    '<one concise sentence>',
+    'NEXT CHECKS:',
+    '1. <concrete check>',
+    '2. <concrete check>',
+    '3. <concrete check>',
+    'Use 2-4 short, concrete checks to explain this status and find the missing or failed coverage. Keep it under 120 words.'
+  ].join('\n');
+}
+
+app.post('/api/insights/summary', async (request, response, next) => {
+  try {
+    const rows = Array.isArray(request.body?.rows) ? request.body.rows : [];
+    const summary = await askLlm(buildSummaryPrompt(rows));
+    response.json({ summary });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/insights/investigate', async (request, response, next) => {
+  try {
+    const { row, historyRuns } = request.body || {};
+    if (!row || typeof row !== 'object') {
+      response.status(400).json({ error: 'A pipeline row is required.' });
+      return;
+    }
+    const analysis = await askLlm(buildInvestigationPrompt(row, historyRuns));
+    response.json({ analysis });
   } catch (error) {
     next(error);
   }
