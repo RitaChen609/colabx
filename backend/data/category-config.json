@@ -1,0 +1,31 @@
+{
+  "categories": ["DAILY", "JAVA API & OTHERS", "MLCP", "SEMANTICS", "GEOSPATIAL", "SEARCH", "SEARCH & LOAD"],
+  "major_version_category_pipelines": {
+    "11": {
+      "DAILY": ["PERF-daily-index-resolution", "PERF-daily-order-by", "PERF-daily-sp2", "PERF-daily-sparql-nested-optionals", "PERF-daily-sql"],
+      "JAVA API & OTHERS": ["PERF-autocomplete", "PERF-java-bulk-api", "PERF-machinelearning-onnx", "PERF-qbac", "PERF-qbv-sp2", "PERF-qbv-tpch"],
+      "MLCP": ["PERF-MLCP-delimited-text", "PERF-MLCP-json-gzip", "PERF-MLCP-json-uncompressed", "PERF-MLCP-rdf-triples", "PERF-MLCP-xml-aggregate"],
+      "SEMANTICS": ["PERF-semantics-sp2", "PERF-semantics-tpch", "PERF-semantics-optics", "PERF-semantics-aggregates", "PERF-semantics-negations", "PERF-GraphQL"],
+      "GEOSPATIAL": ["PERF-geo-additional-functions", "PERF-geo-additional-predicates-raw", "PERF-geo-additional-predicates-wgs84", "PERF-geo-double-precision", "PERF-geo-overlapping-polygons", "PERF-geo-searches-wgs84", "PERF-geo-op-additional-functions", "PERF-geo-op-additional-predicates-raw", "PERF-geo-op-additional-predicates-wgs84", "PERF-geo-op-double-precision", "PERF-geo-op-searches-wgs84"],
+      "SEARCH": ["PERF-els", "PERF-js-precommit-trigger", "PERF-protected-path"],
+      "SEARCH & LOAD": ["PERF-deeply-nested-sparql-union", "PERF-resume-load", "PERF-wide-table-queries", "PERF-tde-latency", "PERF-tableau", "PERF-ldap-negative-cache", "PERF-healthcheck", "PERF-pki-audit-xdqp-ssl-enabled", "PERF-pki-audit-db-encryption", "PERF-internal-security", "PERF-ldap", "PERF-oauth"]
+    },
+    "12": {
+      "DAILY": ["PERF-daily-index-resolution", "PERF-daily-order-by", "PERF-daily-sp2", "PERF-daily-sparql-nested-optionals", "PERF-daily-sql", "WakkaaDOODoo"],
+      "JAVA API & OTHERS": ["PERF-autocomplete", "PERF-java-bulk-api", "PERF-machinelearning-onnx", "PERF-qbac", "PERF-qbv-sp2", "PERF-qbv-tpch"],
+      "MLCP": ["PERF-MLCP-delimited-text", "PERF-MLCP-json-gzip", "PERF-MLCP-json-uncompressed", "PERF-MLCP-rdf-triples", "PERF-MLCP-xml-aggregate"],
+      "SEMANTICS": ["PERF-semantics-sp2", "PERF-semantics-tpch", "PERF-semantics-optics", "PERF-semantics-aggregates", "PERF-semantics-negations", "PERF-GraphQL"],
+      "GEOSPATIAL": ["PERF-geo-additional-functions", "PERF-geo-additional-predicates-raw", "PERF-geo-additional-predicates-wgs84", "PERF-geo-double-precision", "PERF-geo-overlapping-polygons", "PERF-geo-searches-wgs84", "PERF-geo-op-additional-functions", "PERF-geo-op-additional-predicates-raw", "PERF-geo-op-additional-predicates-wgs84", "PERF-geo-op-double-precision", "PERF-geo-op-searches-wgs84"],
+      "SEARCH": ["PERF-els", "PERF-js-precommit-trigger", "PERF-protected-path"],
+      "SEARCH & LOAD": ["PERF-deeply-nested-sparql-union", "PERF-resume-load", "PERF-wide-table-queries", "PERF-tde-latency", "PERF-tableau", "PERF-ldap-negative-cache", "PERF-healthcheck", "PERF-pki-audit-xdqp-ssl-enabled", "PERF-internal-security", "PERF-ldap", "PERF-oauth"]
+    }
+  },
+  "columns": {
+    "ON-PREM": { "Intel": [11, 12] },
+    "AWS": { "Intel": [11, 12], "Graviton": [11, 12] }
+  },
+  "os_onprem": "rh9",
+  "os_aws": "al2023",
+  "aws_intel_instance_type": "m7i.8xlarge",
+  "aws_graviton_instance_type": "m8g.8xlarge"
+}

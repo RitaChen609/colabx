@@ -10,6 +10,9 @@ coverage/
 .env.*
 !.env.example
 
+# Local MarkLogic credentials
+backend/config/marklogic.local.json
+
 # Logs
 *.log
 npm-debug.log*

@@ -1,18 +1,133 @@
 import cors from 'cors';
+import DigestFetch from 'digest-fetch';
 import express from 'express';
 import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 
 const app = express();
 const port = process.env.PORT || 3001;
-const dataUrl = new URL('../data/pipeline-status.json', import.meta.url);
+const categoryConfigUrl = new URL('../data/category-config.json', import.meta.url);
+const markLogicConfigUrl = new URL('../config/marklogic.local.json', import.meta.url);
+const markLogicModule = '/ext/find-perf-category-run-info.xqy';
+
+async function loadMarkLogicConfig() {
+  try {
+    return JSON.parse(await readFile(markLogicConfigUrl, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return {};
+    throw new Error(`Unable to read MarkLogic configuration: ${error.message}`);
+  }
+}
+
+const markLogicConfig = await loadMarkLogicConfig();
+const markLogicUrl = process.env.MARKLOGIC_URL || markLogicConfig.url;
+const markLogicUsername = process.env.MARKLOGIC_USERNAME || markLogicConfig.username;
+const markLogicPassword = process.env.MARKLOGIC_PASSWORD || markLogicConfig.password;
+const markLogicDatabase = process.env.MARKLOGIC_DATABASE || markLogicConfig.database || 'stats';
+
+const categoryBases = {
+  DAILY: 'DAILY',
+  'JAVA API & OTHERS': 'JAVA-API-OTHERS',
+  MLCP: 'MLCP',
+  SEMANTICS: 'SEMANTICS',
+  GEOSPATIAL: 'GEOSPATIAL',
+  SEARCH: 'SEARCH',
+  'SEARCH & LOAD': 'SEARCH-LOAD'
+};
 
 app.use(cors());
 
+function getConnection() {
+  if (!markLogicUrl || !markLogicUsername || !markLogicPassword) {
+    throw new Error('MarkLogic is not configured. Set backend/config/marklogic.local.json or the MARKLOGIC_URL, MARKLOGIC_USERNAME, and MARKLOGIC_PASSWORD environment variables.');
+  }
+
+  return {
+    client: new DigestFetch(markLogicUsername, markLogicPassword),
+    invokeUrl: new URL('/v1/invoke', markLogicUrl).toString()
+  };
+}
+
+function cellParameters(category, dataCenter, architecture, version, config) {
+  const isAws = dataCenter === 'AWS';
+  const instanceType = !isAws
+    ? undefined
+    : architecture === 'Graviton'
+      ? config.aws_graviton_instance_type
+      : config.aws_intel_instance_type;
+
+  return {
+    schedulerType: `${isAws ? 'SCHEDULER-AWS-' : 'SCHEDULER-RH9-'}${categoryBases[category] || category.replaceAll(' ', '-').replaceAll('&', 'AND')}-${version}`,
+    features: config.major_version_category_pipelines[String(version)][category],
+    majorVersion: String(version),
+    os: isAws ? config.os_aws : config.os_onprem,
+    instanceType
+  };
+}
+
+function parseMarkLogicResponse(body, contentType) {
+  if (contentType.includes('application/json')) return JSON.parse(body);
+
+  const jsonPart = body.match(/\{[\s\S]*\}/)?.[0];
+  if (!jsonPart) throw new Error('MarkLogic returned no JSON result.');
+  return JSON.parse(jsonPart);
+}
+
+async function queryCell(client, invokeUrl, category, dataCenter, architecture, version, config) {
+  const parameters = cellParameters(category, dataCenter, architecture, version, config);
+  const variables = {
+    'SCHEDULER-TYPE': parameters.schedulerType,
+    FEATURES: parameters.features.join(','),
+    'MAJOR-VERSION': parameters.majorVersion,
+    OS: parameters.os
+  };
+  if (parameters.instanceType) variables['INSTANCE-TYPE'] = parameters.instanceType;
+
+  const form = new URLSearchParams({
+    database: markLogicDatabase,
+    module: markLogicModule,
+    vars: JSON.stringify(variables)
+  });
+  const response = await client.fetch(invokeUrl, {
+    method: 'POST',
+    headers: {
+      Accept: 'multipart/mixed; boundary=BOUNDARY',
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: form
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`MarkLogic request failed with ${response.status}: ${body}`);
+
+  const result = parseMarkLogicResponse(body, response.headers.get('content-type') || '');
+  const pipelines = result.pipelines || [];
+  return {
+    id: `${category}-${dataCenter}-${architecture}-${version}`,
+    category,
+    dataCenter,
+    architecture,
+    version: String(version),
+    scheduler: result.scheduler || parameters.schedulerType,
+    mltag: result.mltag || null,
+    date: result.date || null,
+    expectedPipelines: parameters.features,
+    pipelines,
+    status: result.date ? (pipelines.length === parameters.features.length ? 'Healthy' : 'Missing') : 'Unknown'
+  };
+}
+
 app.get('/api/pipeline-status', async (_request, response, next) => {
   try {
-    const data = await readFile(dataUrl, 'utf8');
-    response.json(JSON.parse(data));
+    const config = JSON.parse(await readFile(categoryConfigUrl, 'utf8'));
+    const { client, invokeUrl } = getConnection();
+    const requests = config.categories.flatMap((category) => (
+      Object.entries(config.columns).flatMap(([dataCenter, architectures]) => (
+        Object.entries(architectures).flatMap(([architecture, versions]) => (
+          versions.map((version) => queryCell(client, invokeUrl, category, dataCenter, architecture, version, config))
+        ))
+      ))
+    ));
+    const rows = await Promise.all(requests);
+    response.json({ refreshedAt: new Date().toISOString(), rows });
   } catch (error) {
     next(error);
   }
@@ -20,7 +135,7 @@ app.get('/api/pipeline-status', async (_request, response, next) => {
 
 app.use((error, _request, response, _next) => {
   console.error(error);
-  response.status(500).json({ error: 'Unable to read pipeline status data.' });
+  response.status(500).json({ error: error.message || 'Unable to load pipeline status data.' });
 });
 
 app.listen(port, () => {

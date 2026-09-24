@@ -93,7 +93,7 @@ function App() {
         <div>
           <p className="eyebrow">Performance Engineering</p>
           <h1>Pipeline Pulse</h1>
-          <p className="subtitle">Latest expected pipeline coverage across Nightly and Release builds.</p>
+          <p className="subtitle">Latest expected pipeline coverage from the Performance MarkLogic statistics database.</p>
         </div>
         <button className="refresh" type="button" onClick={loadData} disabled={loading} aria-label="Refresh pipeline status">
           <span aria-hidden="true">↻</span> Refresh
@@ -101,7 +101,7 @@ function App() {
       </header>
 
       {payload && <section className="summary" aria-label="Pipeline status summary">
-        {['Healthy', 'Failed', 'Stale', 'Missing', 'In Progress', 'Unknown'].map((status) => (
+        {['Healthy', 'Missing', 'Unknown'].map((status) => (
           <button
             type="button"
             className={`summary-item${statusFilter === status ? ' summary-item-active' : ''}`}
@@ -119,10 +119,9 @@ function App() {
       <section className="panel" aria-live="polite">
         <div className="table-heading">
           <div>
-            <h2>Expected pipeline coverage</h2>
+            <h2>Performance pipeline coverage</h2>
             <p>{payload ? `Data refreshed ${formatDate(payload.refreshedAt)} UTC` : 'Loading latest status...'}</p>
           </div>
-          {payload && <span className="threshold">Stale after {payload.staleAfterHours} hours</span>}
         </div>
 
         {payload && <div className="filters">
@@ -155,8 +154,8 @@ function App() {
             <thead>
               <tr>
                 {[
-                  ['status', 'Status'], ['category', 'Category'], ['buildType', 'Build'], ['platform', 'Platform'],
-                  ['architecture', 'Architecture'], ['version', 'Version'], ['jobName', 'Pipeline'], ['lastRun', 'Last run'], ['lastSuccessfulRun', 'Last success']
+                  ['status', 'Status'], ['category', 'Category'], ['dataCenter', 'Data center'], ['architecture', 'Architecture'],
+                  ['version', 'Version'], ['scheduler', 'Scheduler'], ['mltag', 'Build tag'], ['date', 'Run date'], ['coverage', 'Coverage']
                 ].map(([key, label]) => (
                   <th key={key} aria-sort={sort.key === key ? `${sort.direction}ending` : 'none'}>
                     <button type="button" onClick={() => changeSort(key)}>{label}{sort.key === key ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ''}</button>
@@ -170,16 +169,15 @@ function App() {
                 <tr key={row.id}>
                   <td><StatusBadge status={row.status} /></td>
                   <td>{row.category}</td>
-                  <td>{row.buildType}</td>
-                  <td>{row.platform}</td>
+                  <td>{row.dataCenter}</td>
                   <td>{row.architecture}</td>
                   <td>{row.version}</td>
-                  <td><code>{row.jobName}</code></td>
-                  <td>{formatDate(row.lastRun)}</td>
-                  <td>{formatDate(row.lastSuccessfulRun)}</td>
+                  <td><code>{row.scheduler}</code></td>
+                  <td>{row.mltag || 'Not available'}</td>
+                  <td>{formatDate(row.date)}</td>
+                  <td>{row.pipelines.length} of {row.expectedPipelines.length}</td>
                   <td className="investigation">
-                    <span>{row.details}</span>
-                    {row.jobUrl && <a href={row.jobUrl} target="_blank" rel="noreferrer">Open job</a>}
+                    <span>{row.pipelines.length ? row.pipelines.join(', ') : 'No pipelines returned.'}</span>
                   </td>
                 </tr>
               ))}
@@ -188,7 +186,7 @@ function App() {
         </div>}
 
         {payload && <footer className="pagination">
-          <span>{filteredRows.length} expected pipelines</span>
+          <span>{filteredRows.length} performance run cells</span>
           <div>
             <button type="button" onClick={() => setPage(page - 1)} disabled={page === 1}>Previous</button>
             <span>Page {page} of {pageCount}</span>
