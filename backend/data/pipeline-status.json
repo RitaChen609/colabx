@@ -1,0 +1,135 @@
+{
+  "refreshedAt": "2026-09-24T14:30:00Z",
+  "staleAfterHours": 24,
+  "categories": [
+    {
+      "name": "DAILY",
+      "expectedPipelines": [
+        {
+          "platform": "On-prem",
+          "architecture": "Intel",
+          "version": "12.0",
+          "buildType": "Nightly",
+          "jobName": "perf-daily-intel-12",
+          "parameters": { "suite": "daily", "database": "Documents" }
+        },
+        {
+          "platform": "AWS",
+          "architecture": "Graviton",
+          "version": "12.0",
+          "buildType": "Release",
+          "jobName": "perf-daily-graviton-12-release",
+          "parameters": { "suite": "daily", "region": "us-east-1" }
+        }
+      ],
+      "observedRuns": [
+        {
+          "jobName": "perf-daily-intel-12",
+          "parameters": { "suite": "daily", "database": "Documents" },
+          "state": "completed",
+          "lastRun": "2026-09-24T13:48:00Z",
+          "lastSuccessfulRun": "2026-09-24T13:48:00Z",
+          "jobUrl": "https://jenkins.example.test/job/perf-daily-intel-12/421/",
+          "details": "Completed successfully in 42 minutes."
+        },
+        {
+          "jobName": "perf-daily-graviton-12-release",
+          "parameters": { "suite": "daily", "region": "us-east-1" },
+          "state": "in_progress",
+          "lastRun": "2026-09-24T14:10:00Z",
+          "lastSuccessfulRun": "2026-09-23T14:03:00Z",
+          "jobUrl": "https://jenkins.example.test/job/perf-daily-graviton-12-release/118/",
+          "details": "Executing data load stage."
+        }
+      ]
+    },
+    {
+      "name": "SEARCH",
+      "expectedPipelines": [
+        {
+          "platform": "AWS",
+          "architecture": "Intel",
+          "version": "12.0",
+          "buildType": "Nightly",
+          "jobName": "perf-search-intel-12",
+          "parameters": { "suite": "search", "dataset": "medium" }
+        },
+        {
+          "platform": "AWS",
+          "architecture": "Graviton",
+          "version": "11.0",
+          "buildType": "Nightly",
+          "jobName": "perf-search-graviton-11",
+          "parameters": { "suite": "search", "dataset": "medium" }
+        }
+      ],
+      "observedRuns": [
+        {
+          "jobName": "perf-search-intel-12",
+          "parameters": { "suite": "search", "dataset": "medium" },
+          "state": "failed",
+          "lastRun": "2026-09-24T11:23:00Z",
+          "lastSuccessfulRun": "2026-09-23T11:16:00Z",
+          "jobUrl": "https://jenkins.example.test/job/perf-search-intel-12/884/",
+          "details": "Test execution failed: cluster host did not become available."
+        }
+      ]
+    },
+    {
+      "name": "GEOSPATIAL",
+      "expectedPipelines": [
+        {
+          "platform": "On-prem",
+          "architecture": "Intel",
+          "version": "11.0",
+          "buildType": "Release",
+          "jobName": "perf-geospatial-intel-11-release",
+          "parameters": { "suite": "geospatial", "database": "Documents" }
+        },
+        {
+          "platform": "AWS",
+          "architecture": "Graviton",
+          "version": "12.0",
+          "buildType": "Nightly",
+          "jobName": "perf-geospatial-graviton-12",
+          "parameters": { "suite": "geospatial", "region": "us-west-2" }
+        }
+      ],
+      "observedRuns": [
+        {
+          "jobName": "perf-geospatial-intel-11-release",
+          "parameters": { "suite": "geospatial", "database": "Documents" },
+          "state": "completed",
+          "lastRun": "2026-09-21T08:30:00Z",
+          "lastSuccessfulRun": "2026-09-21T08:30:00Z",
+          "jobUrl": "https://jenkins.example.test/job/perf-geospatial-intel-11-release/309/",
+          "details": "Completed successfully, but the latest run is older than the recency threshold."
+        }
+      ]
+    },
+    {
+      "name": "SEMANTICS",
+      "expectedPipelines": [
+        {
+          "platform": "On-prem",
+          "architecture": "Intel",
+          "version": "12.0",
+          "buildType": "Nightly",
+          "jobName": "perf-semantics-intel-12",
+          "parameters": { "suite": "semantics", "database": "Documents" }
+        }
+      ],
+      "observedRuns": [
+        {
+          "jobName": "perf-semantics-intel-12",
+          "parameters": { "suite": "semantics", "database": "Documents" },
+          "state": "unknown",
+          "lastRun": null,
+          "lastSuccessfulRun": null,
+          "jobUrl": "https://jenkins.example.test/job/perf-semantics-intel-12/",
+          "details": "The source system returned an incomplete run record."
+        }
+      ]
+    }
+  ]
+}
