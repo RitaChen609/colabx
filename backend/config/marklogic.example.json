@@ -2,5 +2,6 @@
   "url": "http://ml-r8-pear:8006",
   "username": "run-status-user",
   "password": "",
-  "database": "stats"
+  "database": "stats",
+  "jenkinsBaseUrl": "https://your-jenkins-host"
 }

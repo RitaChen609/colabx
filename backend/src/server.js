@@ -23,6 +23,10 @@ const markLogicUrl = process.env.MARKLOGIC_URL || markLogicConfig.url;
 const markLogicUsername = process.env.MARKLOGIC_USERNAME || markLogicConfig.username;
 const markLogicPassword = process.env.MARKLOGIC_PASSWORD || markLogicConfig.password;
 const markLogicDatabase = process.env.MARKLOGIC_DATABASE || markLogicConfig.database || 'stats';
+const jenkinsBaseUrl = process.env.JENKINS_BASE_URL || markLogicConfig.jenkinsBaseUrl;
+const historyRunLimit = 6;
+const historySearchPageLength = 500;
+const testNamespace = 'http://www.marklogic.com/perf/test';
 
 const categoryBases = {
   DAILY: 'DAILY',
@@ -43,8 +47,15 @@ function getConnection() {
 
   return {
     client: new DigestFetch(markLogicUsername, markLogicPassword),
-    invokeUrl: new URL('/v1/invoke', markLogicUrl).toString()
+    invokeUrl: new URL('/v1/invoke', markLogicUrl).toString(),
+    searchUrl: new URL('/v1/search', markLogicUrl).toString()
   };
+}
+
+/** Scheduler values are Jenkins job paths, so a build URL is the base URL plus that path. */
+function jenkinsUrl(scheduler) {
+  if (!jenkinsBaseUrl || !scheduler) return null;
+  return `${jenkinsBaseUrl.replace(/\/$/, '')}/${scheduler.replace(/^\//, '')}`;
 }
 
 function cellParameters(category, dataCenter, architecture, version, config) {
@@ -70,6 +81,12 @@ function parseMarkLogicResponse(body, contentType) {
   const jsonPart = body.match(/\{[\s\S]*\}/)?.[0];
   if (!jsonPart) throw new Error('MarkLogic returned no JSON result.');
   return JSON.parse(jsonPart);
+}
+
+function displayScheduler(scheduler) {
+  if (!scheduler) return scheduler;
+  const schedulerIndex = scheduler.lastIndexOf('SCHEDULER-');
+  return schedulerIndex >= 0 ? scheduler.slice(schedulerIndex) : scheduler;
 }
 
 async function queryCell(client, invokeUrl, category, dataCenter, architecture, version, config) {
@@ -100,19 +117,100 @@ async function queryCell(client, invokeUrl, category, dataCenter, architecture, 
 
   const result = parseMarkLogicResponse(body, response.headers.get('content-type') || '');
   const pipelines = result.pipelines || [];
+  const schedulerFull = result.scheduler || parameters.schedulerType;
   return {
     id: `${category}-${dataCenter}-${architecture}-${version}`,
     category,
     dataCenter,
     architecture,
     version: String(version),
-    scheduler: result.scheduler || parameters.schedulerType,
+    scheduler: displayScheduler(schedulerFull),
+    schedulerFull,
+    jenkinsUrl: jenkinsUrl(schedulerFull),
     mltag: result.mltag || null,
     date: result.date || null,
     expectedPipelines: parameters.features,
     pipelines,
     status: result.date ? (pipelines.length === parameters.features.length ? 'Healthy' : 'Missing') : 'Unknown'
   };
+}
+
+function testElement(name) {
+  return { ns: testNamespace, name };
+}
+
+/** Parses the simple text elements returned by extract-document-data. */
+function extractedFields(result) {
+  const fields = {};
+  for (const fragment of result.extracted?.content || []) {
+    const match = /^<test:([\w-]+)\b[^>]*>([\s\S]*)<\/test:[\w-]+>$/.exec(String(fragment).trim());
+    if (match) fields[match[1]] = match[2];
+  }
+  return fields;
+}
+
+/** Groups run documents (one per pipeline) into distinct scheduler runs, newest first. */
+function groupRuns(results, expectedCount) {
+  const runs = new Map();
+
+  for (const result of results) {
+    const fields = extractedFields(result);
+    const scheduler = (fields.scheduler || '').replace(/\/$/, '');
+    if (!scheduler) continue;
+
+    let run = runs.get(scheduler);
+    if (!run) {
+      if (runs.size >= historyRunLimit) continue;
+      run = { scheduler, date: fields.date || null, mltag: fields.mltag || null, pipelines: new Set() };
+      runs.set(scheduler, run);
+    }
+    if (fields['base-feature']) run.pipelines.add(fields['base-feature']);
+  }
+
+  return [...runs.values()].map((run) => ({
+    scheduler: displayScheduler(run.scheduler),
+    schedulerFull: run.scheduler,
+    jenkinsUrl: jenkinsUrl(run.scheduler),
+    date: run.date,
+    mltag: run.mltag,
+    found: run.pipelines.size,
+    expected: expectedCount
+  }));
+}
+
+async function fetchRunHistory(client, searchUrl, parameters) {
+  const queries = [
+    { 'term-query': { text: [parameters.schedulerType] } },
+    { 'value-query': { element: testElement('ml-major-version'), text: [parameters.majorVersion] } },
+    { 'value-query': { element: testElement('ml-os-version'), text: [parameters.os] } }
+  ];
+  if (parameters.instanceType) {
+    queries.push({ 'value-query': { element: testElement('aws-instance-type'), text: [parameters.instanceType] } });
+  }
+
+  const search = {
+    search: {
+      query: { queries: [{ 'and-query': { queries } }] },
+      options: {
+        'sort-order': [{ direction: 'descending', type: 'xs:dateTime', element: testElement('start') }],
+        'extract-document-data': {
+          selected: 'include',
+          'extract-path': ['/*:test/*:scheduler', '/*:test/*:date', '/*:test/*:mltag', '/*:test/*:base-feature']
+        }
+      }
+    }
+  };
+
+  const url = `${searchUrl}?database=${encodeURIComponent(markLogicDatabase)}&format=json&pageLength=${historySearchPageLength}`;
+  const response = await client.fetch(url, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(search)
+  });
+  const body = await response.text();
+  if (!response.ok) throw new Error(`MarkLogic history request failed with ${response.status}: ${body}`);
+
+  return groupRuns(JSON.parse(body).results || [], parameters.features.length);
 }
 
 app.get('/api/pipeline-status', async (_request, response, next) => {
@@ -128,6 +226,26 @@ app.get('/api/pipeline-status', async (_request, response, next) => {
     ));
     const rows = await Promise.all(requests);
     response.json({ refreshedAt: new Date().toISOString(), rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/pipeline-history', async (request, response, next) => {
+  try {
+    const config = JSON.parse(await readFile(categoryConfigUrl, 'utf8'));
+    const { category, dataCenter, architecture, version } = request.query;
+
+    // Only accept coordinates present in the configuration, so no caller input reaches the query.
+    const architectures = config.columns[dataCenter];
+    if (!config.categories.includes(category) || !architectures?.[architecture]?.includes(Number(version))) {
+      response.status(400).json({ error: 'Unknown pipeline coordinates.' });
+      return;
+    }
+
+    const { client, searchUrl } = getConnection();
+    const parameters = cellParameters(category, dataCenter, architecture, Number(version), config);
+    response.json({ runs: await fetchRunHistory(client, searchUrl, parameters) });
   } catch (error) {
     next(error);
   }

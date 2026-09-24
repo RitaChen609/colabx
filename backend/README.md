@@ -24,6 +24,10 @@ The local config is gitignored. Environment variables (`MARKLOGIC_URL`,
 `MARKLOGIC_USERNAME`, `MARKLOGIC_PASSWORD`, and `MARKLOGIC_DATABASE`) override
 its values when set.
 
+Set `jenkinsBaseUrl` (or `JENKINS_BASE_URL`) to turn scheduler paths into Jenkins
+links. Scheduler values returned by MarkLogic are Jenkins job paths, so the build
+URL is that base plus the path. Links are hidden when it is not configured.
+
 The API listens at `http://localhost:3001`. Its single endpoint is:
 
 ```text

@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
+import { BarChart3, CalendarDays, CheckCircle2, CircleAlert, Clock, Cpu, Database, ExternalLink, Heart, Layers, PieChart, Server, Tag, TriangleAlert, X } from 'lucide-react';
 import { createRows, statusPriority } from './status.js';
 
-const pageSize = 6;
+const pageSize = 10;
+const autoRefreshIntervalMs = 60_000;
+const historyRunLimit = 6;
 
 function formatDate(value) {
   if (!value) return 'Not available';
@@ -12,8 +15,41 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function formatTimestamp(value) {
+  if (!value) return 'Not available';
+  return new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+    timeZone: 'UTC'
+  }).format(new Date(value));
+}
+
 function StatusBadge({ status }) {
   return <span className={`status status-${status.toLowerCase().replace(' ', '-')}`}>{status}</span>;
+}
+
+function exportFields(row) {
+  const foundPipelines = new Set(row.pipelines);
+  const missingPipelines = row.expectedPipelines.filter((pipeline) => !foundPipelines.has(pipeline));
+  return [
+    row.version, row.category, row.status, row.dataCenter, row.architecture,
+    row.scheduler, row.mltag || '', row.date || '',
+    `${row.pipelines.length} of ${row.expectedPipelines.length}`,
+    row.pipelines.join('; '), missingPipelines.join('; ')
+  ];
+}
+
+function csvCell(value) {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
+
+function downloadFile(contents, name, type) {
+  const url = URL.createObjectURL(new Blob([contents], { type }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 function App() {
@@ -25,6 +61,10 @@ function App() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [versionFilter, setVersionFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedRowId, setSelectedRowId] = useState(null);
+  const [history, setHistory] = useState({ status: 'idle', runs: [] });
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
 
   async function loadData() {
     setLoading(true);
@@ -45,14 +85,57 @@ function App() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (!autoRefreshEnabled) return undefined;
+
+    const intervalId = window.setInterval(loadData, autoRefreshIntervalMs);
+    return () => window.clearInterval(intervalId);
+  }, [autoRefreshEnabled]);
+
   const rows = payload ? createRows(payload) : [];
+  const selectedRow = rows.find((row) => row.id === selectedRowId) || null;
+
+  useEffect(() => {
+    if (!selectedRow) {
+      setHistory({ status: 'idle', runs: [] });
+      return undefined;
+    }
+
+    let active = true;
+    const parameters = new URLSearchParams({
+      category: selectedRow.category,
+      dataCenter: selectedRow.dataCenter,
+      architecture: selectedRow.architecture,
+      version: selectedRow.version
+    });
+
+    setHistory({ status: 'loading', runs: [] });
+    fetch(`/api/pipeline-history?${parameters}`)
+      .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
+      .then((data) => active && setHistory({ status: 'ready', runs: data.runs || [] }))
+      .catch(() => active && setHistory({ status: 'error', runs: [] }));
+
+    return () => { active = false; };
+  }, [selectedRowId, payload]);
+
   const categoryOptions = [...new Set(rows.map((row) => row.category))].sort((a, b) => a.localeCompare(b));
   const versionOptions = [...new Set(rows.map((row) => row.version))].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
   const scopedRows = rows.filter((row) => (
     (categoryFilter === 'all' || row.category === categoryFilter)
     && (versionFilter === 'all' || row.version === versionFilter)
   ));
-  const filteredRows = scopedRows.filter((row) => statusFilter === 'all' || row.status === statusFilter);
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const filteredRows = scopedRows.filter((row) => {
+    if (statusFilter === 'attention' && row.status === 'Healthy') return false;
+    if (statusFilter !== 'all' && statusFilter !== 'attention' && row.status !== statusFilter) return false;
+    if (!normalizedSearchTerm) return true;
+
+    const searchableValues = [
+      row.category, row.status, row.dataCenter, row.architecture, row.version,
+      row.scheduler, row.schedulerFull, row.mltag, row.date, ...row.pipelines, ...row.expectedPipelines
+    ];
+    return searchableValues.some((value) => String(value || '').toLowerCase().includes(normalizedSearchTerm));
+  });
   const sortedRows = [...filteredRows].sort((first, second) => {
     const firstValue = sort.key === 'status' ? statusPriority[first.status] : first[sort.key] ?? '';
     const secondValue = sort.key === 'status' ? statusPriority[second.status] : second[sort.key] ?? '';
@@ -70,7 +153,10 @@ function App() {
     setPage(1);
   }
 
-  const summary = scopedRows.reduce((counts, row) => ({ ...counts, [row.status]: (counts[row.status] || 0) + 1 }), {});
+  const monitoredCount = scopedRows.length;
+  const healthyCount = scopedRows.filter((row) => row.status === 'Healthy').length;
+  const attentionCount = monitoredCount - healthyCount;
+  const gapRate = monitoredCount ? Math.round((attentionCount / monitoredCount) * 100) : 0;
 
   function changeCategoryFilter(value) {
     setCategoryFilter(value);
@@ -82,9 +168,45 @@ function App() {
     setPage(1);
   }
 
+  function changeSearchTerm(value) {
+    setSearchTerm(value);
+    setPage(1);
+  }
+
   function toggleStatusFilter(status) {
     setStatusFilter((current) => (current === status ? 'all' : status));
     setPage(1);
+  }
+
+  function exportCsv() {
+    const headers = ['Version', 'Category', 'Status', 'Data center', 'Architecture', 'Scheduler', 'Build tag', 'Run date', 'Coverage', 'Found pipelines', 'Missing pipelines'];
+    const csv = [headers, ...sortedRows.map(exportFields)]
+      .map((values) => values.map(csvCell).join(','))
+      .join('\n');
+    downloadFile(csv, 'pipeline-pulse.csv', 'text/csv;charset=utf-8');
+  }
+
+  async function exportPdf() {
+    const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable')
+    ]);
+    const document = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+    document.setFontSize(16);
+    document.text('Pipeline Pulse', 36, 36);
+    document.setFontSize(9);
+    document.setTextColor(82, 97, 110);
+    document.text(`${sortedRows.length} filtered performance run cells`, 36, 51);
+    autoTable(document, {
+      startY: 64,
+      head: [['Version', 'Category', 'Status', 'Data center', 'Architecture', 'Scheduler', 'Build tag', 'Run date', 'Coverage', 'Found pipelines', 'Missing pipelines']],
+      body: sortedRows.map(exportFields),
+      margin: { left: 28, right: 28 },
+      styles: { fontSize: 6.5, cellPadding: 3, overflow: 'linebreak' },
+      headStyles: { fillColor: [46, 62, 79], textColor: 255 },
+      columnStyles: { 5: { cellWidth: 92 }, 9: { cellWidth: 100 }, 10: { cellWidth: 100 } }
+    });
+    document.save('pipeline-pulse.pdf');
   }
 
   return (
@@ -93,38 +215,98 @@ function App() {
         <div>
           <p className="eyebrow">Performance Engineering</p>
           <h1>Pipeline Pulse</h1>
-          <p className="subtitle">Latest expected pipeline coverage from the Performance MarkLogic statistics database.</p>
+          <p className="subtitle">Real-time MarkLogic performance pipeline health and coverage</p>
         </div>
-        <button className="refresh" type="button" onClick={loadData} disabled={loading} aria-label="Refresh pipeline status">
-          <span aria-hidden="true">↻</span> Refresh
-        </button>
+        <div className="header-actions">
+          <label className="auto-refresh-toggle">
+            <input
+              type="checkbox"
+              checked={autoRefreshEnabled}
+              onChange={(event) => setAutoRefreshEnabled(event.target.checked)}
+            />
+            <span>Auto-refresh</span>
+          </label>
+          <button className="refresh" type="button" onClick={loadData} disabled={loading} aria-label="Refresh pipeline status">
+            <span aria-hidden="true">↻</span> Refresh
+          </button>
+        </div>
       </header>
 
       {payload && <section className="summary" aria-label="Pipeline status summary">
-        {['Healthy', 'Missing', 'Unknown'].map((status) => (
-          <button
-            type="button"
-            className={`summary-item${statusFilter === status ? ' summary-item-active' : ''}`}
-            key={status}
-            onClick={() => toggleStatusFilter(status)}
-            aria-pressed={statusFilter === status}
-            title={`Show ${status} pipelines`}
-          >
-            <StatusBadge status={status} />
-            <strong>{summary[status] || 0}</strong>
-          </button>
-        ))}
+        <button
+          type="button"
+          className={`summary-card${statusFilter === 'all' ? ' summary-card-active' : ''}`}
+          onClick={() => toggleStatusFilter('all')}
+          aria-pressed={statusFilter === 'all'}
+        >
+          <span className="summary-icon"><Layers size={20} /></span>
+          <span className="summary-body">
+            <span className="summary-label">Pipelines monitored</span>
+            <strong>{monitoredCount}</strong>
+            <small>Configured combinations</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          className={`summary-card summary-card-healthy${statusFilter === 'Healthy' ? ' summary-card-active' : ''}`}
+          onClick={() => toggleStatusFilter('Healthy')}
+          aria-pressed={statusFilter === 'Healthy'}
+        >
+          <span className="summary-icon"><Heart size={20} /></span>
+          <span className="summary-body">
+            <span className="summary-label">Healthy coverage</span>
+            <strong>{healthyCount}</strong>
+            <small>All expected pipelines found</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          className={`summary-card summary-card-attention${statusFilter === 'attention' ? ' summary-card-active' : ''}`}
+          onClick={() => toggleStatusFilter('attention')}
+          aria-pressed={statusFilter === 'attention'}
+        >
+          <span className="summary-icon"><TriangleAlert size={20} /></span>
+          <span className="summary-body">
+            <span className="summary-label">Need attention</span>
+            <strong>{attentionCount}</strong>
+            <small>Missing or unknown coverage</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          className={`summary-card summary-card-gap${statusFilter === 'attention' ? ' summary-card-active' : ''}`}
+          onClick={() => toggleStatusFilter('attention')}
+          aria-pressed={statusFilter === 'attention'}
+        >
+          <span className="summary-icon"><PieChart size={20} /></span>
+          <span className="summary-body">
+            <span className="summary-label">Coverage gaps</span>
+            <strong>{gapRate}%</strong>
+            <small>Monitored pipelines</small>
+          </span>
+        </button>
       </section>}
 
+      <div className={`dashboard-layout${selectedRow ? ' inspector-open' : ''}`}>
       <section className="panel" aria-live="polite">
         <div className="table-heading">
           <div>
-            <h2>Performance pipeline coverage</h2>
-            <p>{payload ? `Data refreshed ${formatDate(payload.refreshedAt)} UTC` : 'Loading latest status...'}</p>
+            <h2><BarChart3 size={20} /> Performance pipeline coverage</h2>
+            <p>{payload ? `Data refreshed ${formatTimestamp(payload.refreshedAt)} UTC` : 'Loading latest status...'}</p>
           </div>
         </div>
 
         {payload && <div className="filters">
+          <label className="filter filter-search">
+            <span>Search</span>
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(event) => changeSearchTerm(event.target.value)}
+              placeholder="Search all row details"
+              aria-label="Search all pipeline rows"
+            />
+          </label>
           <label className="filter">
             <span>Category</span>
             <select value={categoryFilter} onChange={(event) => changeCategoryFilter(event.target.value)}>
@@ -139,10 +321,10 @@ function App() {
               {versionOptions.map((version) => <option key={version} value={version}>{version}</option>)}
             </select>
           </label>
-          {(categoryFilter !== 'all' || versionFilter !== 'all' || statusFilter !== 'all') && (
+          {(searchTerm || categoryFilter !== 'all' || versionFilter !== 'all' || statusFilter !== 'all') && (
             <div className="filter-status">
-              {statusFilter !== 'all' && <span className="filter-chip">Status: <strong>{statusFilter}</strong></span>}
-              <button type="button" className="clear-filters" onClick={() => { changeCategoryFilter('all'); changeVersionFilter('all'); toggleStatusFilter('all'); }}>Clear filters</button>
+              {statusFilter !== 'all' && <span className="filter-chip">Status: <strong>{statusFilter === 'attention' ? 'Needs attention' : statusFilter}</strong></span>}
+              <button type="button" className="clear-filters" onClick={() => { changeSearchTerm(''); changeCategoryFilter('all'); changeVersionFilter('all'); toggleStatusFilter('all'); }}>Clear filters</button>
             </div>
           )}
         </div>}
@@ -154,46 +336,147 @@ function App() {
             <thead>
               <tr>
                 {[
-                  ['status', 'Status'], ['category', 'Category'], ['dataCenter', 'Data center'], ['architecture', 'Architecture'],
-                  ['version', 'Version'], ['scheduler', 'Scheduler'], ['mltag', 'Build tag'], ['date', 'Run date'], ['coverage', 'Coverage']
+                  ['version', 'Version'], ['category', 'Category'], ['status', 'Status'], ['dataCenter', 'Data center'], ['architecture', 'Architecture'],
+                  ['scheduler', 'Scheduler'], ['mltag', 'Build tag'], ['date', 'Run date'], ['coverage', 'Coverage']
                 ].map(([key, label]) => (
                   <th key={key} aria-sort={sort.key === key ? `${sort.direction}ending` : 'none'}>
                     <button type="button" onClick={() => changeSort(key)}>{label}{sort.key === key ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ''}</button>
                   </th>
                 ))}
-                <th>Investigation</th>
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((row) => (
-                <tr key={row.id}>
-                  <td><StatusBadge status={row.status} /></td>
-                  <td>{row.category}</td>
-                  <td>{row.dataCenter}</td>
-                  <td>{row.architecture}</td>
-                  <td>{row.version}</td>
-                  <td><code>{row.scheduler}</code></td>
-                  <td>{row.mltag || 'Not available'}</td>
-                  <td>{formatDate(row.date)}</td>
-                  <td>{row.pipelines.length} of {row.expectedPipelines.length}</td>
-                  <td className="investigation">
-                    <span>{row.pipelines.length ? row.pipelines.join(', ') : 'No pipelines returned.'}</span>
-                  </td>
-                </tr>
-              ))}
+              {visibleRows.map((row) => {
+                const coveragePercent = row.expectedPipelines.length
+                  ? Math.min(100, (row.pipelines.length / row.expectedPipelines.length) * 100)
+                  : 0;
+
+                return <tr
+                  className={`data-row${selectedRowId === row.id ? ' data-row-selected' : ''}`}
+                  key={row.id}
+                  onClick={() => setSelectedRowId(row.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setSelectedRowId(row.id);
+                    }
+                  }}
+                  tabIndex="0"
+                  aria-selected={selectedRowId === row.id}
+                >
+                    <td className="version-cell">{row.version}</td>
+                    <td>{row.category}</td>
+                    <td><StatusBadge status={row.status} /></td>
+                    <td>{row.dataCenter}</td>
+                    <td>{row.architecture}</td>
+                    <td><code className="scheduler-value" title={row.schedulerFull || row.scheduler}>{row.scheduler}</code></td>
+                    <td>{row.mltag || 'Not available'}</td>
+                    <td>{formatDate(row.date)}</td>
+                    <td>
+                      <span className="coverage" aria-label={`${row.pipelines.length} of ${row.expectedPipelines.length} expected pipelines found`}>
+                        <span
+                          className="coverage-track"
+                          role="progressbar"
+                          aria-valuemin="0"
+                          aria-valuemax={row.expectedPipelines.length}
+                          aria-valuenow={row.pipelines.length}
+                          style={{ '--coverage-percent': `${coveragePercent}%` }}
+                        >
+                          <span className="coverage-fill" />
+                        </span>
+                        <span className="coverage-label">{row.pipelines.length}/{row.expectedPipelines.length}</span>
+                      </span>
+                    </td>
+                  </tr>;
+              })}
             </tbody>
           </table>
         </div>}
 
         {payload && <footer className="pagination">
           <span>{filteredRows.length} performance run cells</span>
-          <div>
+          <div className="pagination-actions">
+            <button type="button" className="export-button" onClick={exportCsv} disabled={!sortedRows.length}>Export CSV</button>
+            <button type="button" className="export-button" onClick={exportPdf} disabled={!sortedRows.length}>Export PDF</button>
             <button type="button" onClick={() => setPage(page - 1)} disabled={page === 1}>Previous</button>
             <span>Page {page} of {pageCount}</span>
             <button type="button" onClick={() => setPage(page + 1)} disabled={page === pageCount}>Next</button>
           </div>
         </footer>}
       </section>
+      {selectedRow && <aside className="inspector" aria-label="Selected pipeline details">
+        <header className="inspector-header">
+          <div>
+            <h2>{selectedRow.category} · ML {selectedRow.version} · {selectedRow.dataCenter} · {selectedRow.architecture}</h2>
+            <StatusBadge status={selectedRow.status} />
+          </div>
+          <button type="button" className="inspector-close" onClick={() => setSelectedRowId(null)} aria-label="Close pipeline details"><X size={18} /></button>
+        </header>
+        <div className="inspector-body">
+          <section className="detail-coverage">
+            <div className="detail-section-label">Pipeline coverage</div>
+            <div className="detail-coverage-line">
+              <span className="coverage-track detail-coverage-track" role="progressbar" aria-valuemin="0" aria-valuemax={selectedRow.expectedPipelines.length} aria-valuenow={selectedRow.pipelines.length} style={{ '--coverage-percent': `${selectedRow.expectedPipelines.length ? Math.min(100, (selectedRow.pipelines.length / selectedRow.expectedPipelines.length) * 100) : 0}%` }}><span className="coverage-fill" /></span>
+              <strong>{selectedRow.pipelines.length}/{selectedRow.expectedPipelines.length}</strong>
+            </div>
+            <p className="coverage-note">{Math.max(0, selectedRow.expectedPipelines.length - new Set(selectedRow.pipelines).size)} pipeline{selectedRow.expectedPipelines.length - new Set(selectedRow.pipelines).size === 1 ? '' : 's'} missing</p>
+          </section>
+          <dl className="detail-metadata">
+            <div><dt><Tag size={14} /> Build tag</dt><dd>{selectedRow.mltag || 'Not available'}</dd></div>
+            <div><dt><CalendarDays size={14} /> Run date</dt><dd>{formatDate(selectedRow.date)}</dd></div>
+            <div><dt><Database size={14} /> Data center</dt><dd>{selectedRow.dataCenter}</dd></div>
+            <div><dt><Cpu size={14} /> Architecture</dt><dd>{selectedRow.architecture}</dd></div>
+            <div className="detail-scheduler"><dt><Server size={14} /> Scheduler</dt><dd title={selectedRow.schedulerFull || selectedRow.scheduler}>{selectedRow.scheduler}</dd></div>
+            {selectedRow.jenkinsUrl && <div className="detail-jenkins">
+              <dt><ExternalLink size={14} /> Jenkins</dt>
+              <dd><a className="jenkins-link" href={selectedRow.jenkinsUrl} target="_blank" rel="noreferrer" title={selectedRow.jenkinsUrl}>View pipeline run <ExternalLink size={13} /></a></dd>
+            </div>}
+          </dl>
+          <div className="detail-pipelines">
+            <section className="detail-pipeline-list detail-found">
+              <h3><CheckCircle2 size={18} /> Found pipelines <span>{selectedRow.pipelines.length}</span></h3>
+              <ul>
+                {selectedRow.pipelines.map((pipeline) => <li key={pipeline}>{pipeline}</li>)}
+                {!selectedRow.pipelines.length && <li className="pipeline-empty">No expected pipelines found.</li>}
+              </ul>
+            </section>
+            <section className="detail-pipeline-list detail-missing">
+              <h3><CircleAlert size={18} /> Missing pipelines <span>{selectedRow.expectedPipelines.filter((pipeline) => !new Set(selectedRow.pipelines).has(pipeline)).length}</span></h3>
+              <ul>
+                {selectedRow.expectedPipelines.filter((pipeline) => !new Set(selectedRow.pipelines).has(pipeline)).map((pipeline) => <li key={pipeline}>{pipeline}</li>)}
+                {!selectedRow.expectedPipelines.filter((pipeline) => !new Set(selectedRow.pipelines).has(pipeline)).length && <li className="pipeline-empty">No pipelines missing.</li>}
+              </ul>
+            </section>
+          </div>
+          <section className="detail-history">
+            <h3><Clock size={16} /> Recent history <span>last {history.runs.length || historyRunLimit} runs</span></h3>
+            {history.status === 'loading' && <p className="history-note">Loading run history…</p>}
+            {history.status === 'error' && <p className="history-note history-error">Run history could not be loaded.</p>}
+            {history.status === 'ready' && !history.runs.length && <p className="history-note">No previous runs found.</p>}
+            {history.status === 'ready' && history.runs.length > 0 && <ul className="history-list">
+              {history.runs.map((run) => {
+                const percent = run.expected ? Math.min(100, (run.found / run.expected) * 100) : 0;
+                const complete = run.found >= run.expected;
+                const card = <>
+                  <span className="history-date">{run.date || 'Unknown date'}</span>
+                  <span className={`history-count${complete ? ' history-count-complete' : ''}`}>{run.found}/{run.expected}</span>
+                  <span className="coverage-track" style={{ '--coverage-percent': `${percent}%` }}>
+                    <span className={`coverage-fill${complete ? '' : ' coverage-fill-partial'}`} />
+                  </span>
+                  <span className="history-tag">{run.mltag || run.scheduler}</span>
+                </>;
+
+                return <li key={run.schedulerFull}>
+                  {run.jenkinsUrl
+                    ? <a className="history-item history-item-link" href={run.jenkinsUrl} target="_blank" rel="noreferrer" title={run.schedulerFull}>{card}</a>
+                    : <span className="history-item" title={run.schedulerFull}>{card}</span>}
+                </li>;
+              })}
+            </ul>}
+          </section>
+        </div>
+      </aside>}
+      </div>
     </main>
   );
 }
